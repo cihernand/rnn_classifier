@@ -1,0 +1,22 @@
+name: my_rnn
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - gensim
+  - tensorflow
+  - nltk 
+  - scikit-learn 
+  - matplotlib 
+  - seaborn 
+  - wordcloud
+  - numpy
+  - pandas
+  - pip
+  
+  
+
+
+
+
