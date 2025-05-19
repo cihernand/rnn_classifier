@@ -1,0 +1,428 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split, cross_val_score, KFold
+from sklearn.ensemble  import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import pearsonr
+
+# --- Page Configuration ---
+st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
+
+# --- Function to Estimate Correlations ---
+def get_significant_correlations(df, target_variable=None, alpha=0.05):
+    """
+    Identifies variables in a Pandas DataFrame that have statistically significant
+    correlations, optionally with respect to a target variable.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+        target_variable (str, optional): The name of the target variable. If provided,
+            the function calculates correlations only between the target variable
+            and other variables. Defaults to None, in which case it calculates
+            correlations between all pairs of variables.
+        alpha (float, optional): The significance level for determining
+            statistical significance. Defaults to 0.05.
+
+    Returns:
+        pd.DataFrame: DataFrame of significant correlations
+    """
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    numeric_df = df.select_dtypes(include=np.number)
+    if numeric_df.shape[1] < 2:
+        return pd.DataFrame()
+
+    cols = numeric_df.columns
+    correlations = []
+
+    if target_variable:
+        if target_variable not in cols:
+            return pd.DataFrame()
+        for var in cols:
+            if var != target_variable:
+                correlation, p_value = pearsonr(numeric_df[target_variable], numeric_df[var])
+                if p_value < alpha:
+                    correlations.append({'Variable1': target_variable, 'Variable2': var, 'Correlation': correlation, 'P-value': p_value})
+    else:
+        for i, var1 in enumerate(cols):
+            for j, var2 in enumerate(cols[i+1:]):
+                correlation, p_value = pearsonr(numeric_df[var1], numeric_df[var2])
+                if p_value < alpha:
+                    correlations.append({'Variable1': var1, 'Variable2': var2, 'Correlation': correlation, 'P-value': p_value})
+    
+    correlations_df = pd.DataFrame(correlations)
+    
+    if not correlations_df.empty:
+        correlations_df = correlations_df.sort_values(by='Correlation', ascending=False)  # Sort by correlation
+ 
+    else:
+        st.info("No significant correlations found.")
+
+    return correlations_df
+
+# --- Function to Get Numerical and Categorical Vars ---
+def get_numeric_categorical_variables(df):
+    """
+    Gets numeric and categorical variables from a Pandas DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+
+    Returns:
+        tuple: A tuple containing two lists:
+            - The first list contains the names of the numeric variables.
+            - The second list contains the names of the categorical variables.
+            - Returns empty lists if the input is not a DataFrame.
+    """
+    if not isinstance(df, pd.DataFrame):
+        print("Error: Input is not a Pandas DataFrame. Returning empty lists.")
+        return [], []
+
+    numeric_variables = list(df.select_dtypes(include=[np.number]).columns)
+    categorical_variables = list(df.select_dtypes(include=['object', 'category']).columns)
+
+    return numeric_variables, categorical_variables
+
+
+# --- Function to Drop Variables ---
+def drop_variables(df, variables_to_drop):
+    """
+    Drops a list of variables from a Pandas DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+        variables_to_drop (list): A list of variable names (strings) to drop from the DataFrame.
+
+    Returns:
+        pd.DataFrame: The DataFrame with the specified variables dropped.
+                      Returns the original DataFrame if variables_to_drop is empty
+                      or if a variable is not found in the DataFrame.
+    """
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("df must be a pandas DataFrame")
+
+    if not isinstance(variables_to_drop, list):
+        raise TypeError("variables_to_drop must be a list")
+
+    if not variables_to_drop:  # Check for empty list
+        return df
+
+    # Check if all variables_to_drop are in df
+    missing_variables = [var for var in variables_to_drop if var not in df.columns]
+    if missing_variables:
+        print(f"Warning: The following variables were not found in the DataFrame: {missing_variables}")
+        # Drop only the variables that are found
+        variables_to_drop = [var for var in variables_to_drop if var in df.columns]
+        if not variables_to_drop: # if the intersection is empty
+            return df
+
+    try:
+        df = df.drop(columns=variables_to_drop)
+        return df
+    except KeyError as e:
+        print(f"KeyError: {e}.  Returning original DataFrame.")
+        return df
+
+
+
+
+# --- Function to process date column and clean column headers ---
+def process_and_clean_data(df):
+    """
+    Processes a pandas DataFrame to clean column names, extract date features,
+    set 'date' as the index, and sort the DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame to be processed.
+            It is assumed to contain a column named 'date' with datetime values.
+
+    Returns:
+        pd.DataFrame: The processed DataFrame with cleaned column names,
+            added date feature columns ('date_year', 'date_month',
+            'date_day', 'date_dayofweek'), 'date' as the index,
+            and sorted by the index.  Returns the original DataFrame
+            if 'date' column does not exist or is not a datetime.
+    """
+    # Check if the input is a DataFrame and contains the 'date' column
+    if not isinstance(df, pd.DataFrame) or 'date' not in df.columns:
+        return df
+
+    # Helper function to clean column names
+    def clean_header(col):
+        return str(col).strip().replace(' ', '_')
+
+    df.columns = [clean_header(col) for col in df.columns]
+
+    try:
+        # Extract date features
+        date_col = pd.to_datetime(df['date'])  # Convert 'date' to datetime
+        df['date_year'] = date_col.dt.year
+        df['date_month'] = date_col.dt.month_name()
+        df['date_day'] = date_col.dt.day
+        df['date_dayofweek'] = date_col.dt.day_name()
+
+        # Sort and set 'date' as index
+        df = df.sort_values(by='date').set_index('date')
+        return df
+
+    except (AttributeError, KeyError):
+        return df
+
+# --- Function to Upload CSV Files ---  
+def upload_csv(title):
+    """
+    Uploads a CSV file and returns the DataFrame.
+
+    Args:
+        title (str): The title of the file upload widget.
+
+    Returns:
+        pandas.DataFrame: The uploaded DataFrame, or None if no file is uploaded.
+    """
+    uploaded_file = st.sidebar.file_uploader(title, type="csv")
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+            return df
+        except Exception as e:
+            st.sidebar.error(f"Error reading CSV file: {e}")
+            return None
+    return None
+
+# --- Data Loading ---
+df_training = upload_csv("Upload Training Set CSV")
+
+# --- Main Content ---
+st.title("ML model Data Analysis Dashboard")
+
+
+
+# --- Header 1: Feature Preprocessing ---
+st.header("Preprocessing features")
+col1, col2, col3 = st.columns(3)
+
+if df_training is not None:
+    try:
+        # Process Input Columns
+        df_training = process_and_clean_data(df_training)
+
+        # Target variable selection
+        target_variable = st.sidebar.selectbox("Select the target variable:", df_training.columns)
+        # Exclude variables 
+        excluded_variables = st.sidebar.selectbox("Select the variables to exclude:", df_training.columns)
+        excluded_variables =[excluded_variables]
+
+        # Drop columns
+        df_training= drop_variables (df_training, excluded_variables)
+
+        # Estimate Correlation with target vars
+        df_cor_all = get_significant_correlations(df_training)
+        
+        with col1:
+            col1.subheader("Correlation between Features")
+            st.dataframe(df_cor_all)
+         
+        with col2:
+            col2.subheader("Correlation between Explanatory Features")
+            st.dataframe(df_cor_all)
+
+        with col3:
+            col3.subheader("Scatter Plot of Predictions vs Actual")
+            fig_scatter, ax_scatter = plt.subplots()
+            plt.scatter(y_test, y_pred_test, ax=ax_scatter)
+            plt.xlabel("Actual Spending")
+            plt.ylabel("Predicted Spending")
+            st.pyplot(fig_scatter)
+                        # Plot Variables with high correlation
+
+            sns.scatterplot(x=df_cor_all.loc[0,:], y=df_cor_all.loc[0,:], data=df_training)
+            plt.ylabel('wsg')
+            plt.xlabel('juu')
+            plt.title('wgs vs. juu')
+            plt.show()
+
+
+
+    except KeyError as e:
+        st.error(f"KeyError: {e}.  Ensure the 'Age' and 'Spending' columns exist in the customer data, and that you have a target variable.  Adjust the column names as needed.")
+    except Exception as e:
+        st.error(f"An error occurred during model training/evaluation: {e}")
+else:
+    st.write("No customer data uploaded.")
+
+# --- Header 1: Best Model Results ---
+st.header("Best Model Results with all features")
+col1, col2, col3 = st.columns(3)
+
+if df_training is not None:
+    try:
+        # Process Input Columns
+        df_training = process_and_clean_data(df_training)
+
+        # Target variable selection
+        target_variable = st.sidebar.selectbox("Select the target variable:", df_training.columns)
+        # Exclude variables 
+        excluded_variables = st.sidebar.selectbox("Select the variables to exclude:", df_training.columns)
+        excluded_variables =[excluded_variables]
+
+        # Drop columns
+        df_training= drop_variables (df_training, excluded_variables)
+
+        # Estimate Correlation with target vars
+        df_cor_target = get_significant_correlations(df_training, target_variable)
+
+        # Get numerical and categorical variables
+        num_vars, cat_vars = get_numeric_categorical_variables(df_training)
+
+
+        # Create X and Y Objects
+        X = df_training.drop(target_variable, axis="columns", inplace=True)
+        y = df_training[target_variable]   # Target
+
+        # Split data into training and testing sets
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        # Train a Linear Regression model (you can replace with your best model)
+        model = RandomForestRegressor(random_state=42)
+        model.fit(X_train, y_train)
+
+        # Perform cross-validation on the training set
+        cv_scores_rmse = cross_val_score(model, X_train, y_train, cv=5, scoring='neg_mean_squared_error')
+        cv_scores_r2 = cross_val_score(model, X_train, y_train, cv=5, scoring='r2')
+
+        # Calculate RMSE and R2 on the test set
+        y_pred_test = model.predict(X_test)
+        test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+        test_r2 = r2_score(y_test, y_pred_test)
+
+        with col1:
+            col1.subheader("CV Training Results")
+            st.write(f"CV RMSE: {np.mean(np.sqrt(-cv_scores_rmse)):.2f}")
+            st.write(f"CV R2: {np.mean(cv_scores_r2):.2f}")
+            col1.subheader("Testing Results")
+            st.write(f"Test RMSE: {test_rmse:.2f}")
+            st.write(f"Test R2: {test_r2:.2f}")
+
+        with col2:
+            col2.subheader("Histogram of Target Variable")
+            fig_hist, ax_hist = plt.subplots()
+            sns.histplot(y, kde=True, ax=ax_hist)  # Use the 'y' variable
+            st.pyplot(fig_hist)
+
+        with col3:
+            col3.subheader("Scatter Plot of Predictions vs Actual")
+            fig_scatter, ax_scatter = plt.subplots()
+            plt.scatter(y_test, y_pred_test, ax=ax_scatter)
+            plt.xlabel("Actual Spending")
+            plt.ylabel("Predicted Spending")
+            st.pyplot(fig_scatter)
+    except KeyError as e:
+        st.error(f"KeyError: {e}.  Ensure the 'Age' and 'Spending' columns exist in the customer data, and that you have a target variable.  Adjust the column names as needed.")
+    except Exception as e:
+        st.error(f"An error occurred during model training/evaluation: {e}")
+else:
+    st.write("No customer data uploaded.")
+
+# --- Header 2: Model Results with Selected Features ---
+st.header("Model Results with Selected Features")
+col4, col5, col6 = st.columns(3)
+
+if df_training is not None:
+    try:
+        # Feature selection (example: using 'Age' and a created 'Age_Squared' feature)
+        df_training['Age_Squared'] = df_training['Age']**2
+        selected_features = ['Age', 'Age_Squared']
+        X = df_training[selected_features]
+        y = df_training['Spending']
+
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        # Train model
+        model = LinearRegression()  # Or your chosen model
+        model.fit(X_train, y_train)
+
+        # Cross-validation
+        cv_scores_rmse = cross_val_score(model, X_train, y_train, cv=5, scoring='neg_mean_squared_error')
+        cv_scores_r2 = cross_val_score(model, X_train, y_train, cv=5, scoring='r2')
+
+        # Test set performance
+        y_pred_test = model.predict(X_test)
+        test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+        test_r2 = r2_score(y_test, y_pred_test)
+
+        with col4:
+            col4.subheader("CV Training Results")
+            st.write(f"CV RMSE: {np.mean(np.sqrt(-cv_scores_rmse)):.2f}")
+            st.write(f"CV R2: {np.mean(cv_scores_r2):.2f}")
+            col4.subheader("Testing Results")
+            st.write(f"Test RMSE: {test_rmse:.2f}")
+            st.write(f"Test R2: {test_r2:.2f}")
+
+        with col5:
+            col5.subheader("Histogram of Residuals")
+            fig_resid, ax_resid = plt.subplots()
+            sns.histplot(y_test - y_pred_test, kde=True, ax=ax_resid)
+            plt.xlabel("Residuals")
+            st.pyplot(fig_resid)
+
+        with col6:
+            col6.subheader("Bar Plot of Feature Importance")
+            fig_bar, ax_bar = plt.subplots()
+            # Get feature names and coefficients.  This assumes a linear model.
+            feature_names = selected_features
+            coefficients = model.coef_
+            sns.barplot(x=feature_names, y=coefficients, ax=ax_bar)
+            plt.xlabel("Feature")
+            plt.ylabel("Coefficient")
+            st.pyplot(fig_bar)
+    except KeyError as e:
+        st.error(f"KeyError: {e}.  Ensure the necessary columns exist in the customer data.  Currently using 'Age' and 'Age_Squared'.")
+    except Exception as e:
+        st.error(f"An error occurred during model training/evaluation: {e}")
+else:
+    st.write("No customer data uploaded.")
+
+# --- Header 3: Predicted Values ---
+st.header("Predicted Values")
+col7, col8, col9 = st.columns(3)
+
+if df_training is not None:
+    try:
+        #  Reuse the model from Header 2
+        new_data = upload_csv("Upload New Data for Predictions") # added file uploader
+        if new_data is not None:
+
+            X_pred = new_data[selected_features] # Use the features selected for the "best" model
+            y_pred = model.predict(X_pred)
+            predictions_df = pd.DataFrame({'Predicted Spending': y_pred})
+
+            # Add other columns from the new data to the output DataFrame
+            other_cols = [col for col in new_data.columns if col not in selected_features]
+            predictions_df = pd.concat([predictions_df, new_data[other_cols]], axis=1)
+
+            with col7:
+                col7.subheader("Predicted Spending")
+                st.dataframe(predictions_df.head())
+            with col8:
+                col8.subheader("Predicted Spending Distribution")
+                fig_pred_dist, ax_pred_dist = plt.subplots()
+                sns.histplot(predictions_df['Predicted Spending'], kde=True, ax=ax_pred_dist)
+                st.pyplot(fig_pred_dist)
+            with col9:
+                col9.subheader("New Data")
+                st.dataframe(new_data.head())
+
+        else:
+            st.write("Please upload new data to get predictions.")
+
+    except KeyError as e:
+        st.error(f"KeyError: {e}.  Ensure the uploaded data contains the columns: {selected_features}.  These are the features the model was trained on.")
+    except Exception as e:
+        st.error(f"An error occurred while generating predictions: {e}")
+else:
+    st.write("No customer data uploaded.")
