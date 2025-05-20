@@ -851,8 +851,6 @@ if df_training is not None:
 
                 #Preprocess
                 X_pred = new_data_processed[selected_features] # Use the features selected for the "best" model
-
-
                 
                 y_pred = loaded_object.predict(X_pred)
                 predictions_df = pd.DataFrame({'predicted_target': y_pred})
@@ -874,6 +872,24 @@ if df_training is not None:
 
                 st.subheader("New Data Set with predictions")  
                 st.dataframe(predictions_and_vars_df.head())
+
+                st.subheader("Save predictions") 
+                # Text input for user to provide the file name
+                csv_file_name = st.text_input("Enter file name using your last_name-answer.csv", value="hernandez-answer.csv")
+
+                # Convert DataFrame to CSV bytes
+                # io.BytesIO is used to create an in-memory binary stream
+                csv_bytes = io.BytesIO()
+                predictions_and_vars_df.to_csv(csv_bytes, index=False)
+                csv_bytes.seek(0) # Rewind the buffer to the beginning
+
+                # Download button
+                st.download_button(
+                    label="Download CSV",
+                    data=csv_bytes,
+                    file_name=csv_file_name,
+                    mime="csv",
+                    help="Click the predictions as a CSV file.")
 
         else:
             st.write("Please on the left menu, upload new data to get predictions.")
