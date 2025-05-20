@@ -855,10 +855,10 @@ if df_training is not None:
 
                 
                 y_pred = loaded_object.predict(X_pred)
-                predictions_df = pd.DataFrame({'target': y_pred})
+                predictions_df = pd.DataFrame({'predicted_target': y_pred})
 
                 # Add other columns from the new data input to the output DataFrame
-                predictions_and_vars_df = pd.concat([predictions_df, new_data_input], axis=1)
+                predictions_and_vars_df = pd.concat([new_data_input,predictions_df], axis=1)
 
                 # Create Columns to display predictions
                 col9, col10  = st.columns(2)
@@ -869,7 +869,7 @@ if df_training is not None:
                 with col10:
                     col10.subheader("Predicted target Distribution")
                     fig_pred_dist, ax_pred_dist = plt.subplots()
-                    sns.histplot(predictions_df['target'], kde=True, ax=ax_pred_dist)
+                    sns.histplot(predictions_df['predicted_target'], kde=True, ax=ax_pred_dist)
                     st.pyplot(fig_pred_dist)
 
                 st.subheader("New Data Set with predictions")  
