@@ -11,32 +11,24 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 import pickle
 from PIL import Image
 import os
+import datetime
 # --- Page Configuration ---
 st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
 
-# --- Save ML Models ---
+# --- Function to generate a timestamped filename ---
+def get_timestamped_filename(base_name="model", extension=".pkl"):
+    """Generates a filename with the current date and time."""
+    now = datetime.datetime.now()
+    # Format: YYYYMMDD_HHMMSS (e.g., 20250520_184208)
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
+    return f"{base_name}_{timestamp}{extension}"
 
-def save_model_pickle(model, filename):
-    """
-    Saves a trained machine learning model to a file using pickle.
-
-    Args:
-        model: The trained machine learning model to be saved.
-        filename (str): The name of the file where the model will be saved.
-            It is recommended to use a '.pkl' extension.
-    """
-    try:
-        with open(filename, 'wb') as file:
-            pickle.dump(model, file)
-        print(f"Model successfully saved to {filename}")
-    except Exception as e:
-        print(f"Error saving model: {e}")
 
 # --- Select Features ---
-
+@st.cache_data
 def select_features(X_train_processed, X_test_processed,
-                             importance_threshold=0.010, prefix_to_drop='unimportant_',
-                              ):
+                             importance_threshold=0.010, _model=None, prefix_to_drop='unimportant_',
+                             ):
     """
     Selects important features based on Random Forest feature importances,
     evaluates a model (default: RandomForestRegressor) with cross-validation,
@@ -47,6 +39,7 @@ def select_features(X_train_processed, X_test_processed,
         X_test_processed (pd.DataFrame): Preprocessed testing data.
         importance_threshold (float, optional): Threshold for feature importance.
             Defaults to 0.015.
+        model: A trained model with a 'feature_importances_' attribute (e.g., RandomForestRegressor).
         prefix_to_drop (str, optional): Prefix of columns to drop.
             Defaults to 'unimportant_'. 
 
@@ -58,7 +51,7 @@ def select_features(X_train_processed, X_test_processed,
     """
     try:
         
-        feature_importances = pd.Series(model.feature_importances_,
+        feature_importances = pd.Series(_model.feature_importances_,
                                         index=X_train_processed.columns)
 
         # Select important features
@@ -374,13 +367,14 @@ def upload_csv(title):
             return None
     return None
 
-# --- Data Loading ---
-df_training = upload_csv("First Step. Upload Training Set CSV")
+#Start Figures
+st.session_state.plotly_figures = []
 
 # --- Main Content ---
 st.title("ML model Data Analysis Dashboard")
 
-
+# --- Data Loading ---
+df_training = upload_csv("First Step. Upload Training Set CSV")
 
 # --- Header 1: Feature Preprocessing ---
 st.header("Preprocessing features")
@@ -390,6 +384,7 @@ if df_training is not None:
     try:
         # Process Input Columns
         df_training = process_and_clean_data(df_training)
+        st.write ("Column date is processed to get date_year, date_month, date_day and date_dayofweek")
 
         # Target variable selection
         target_variable = st.sidebar.selectbox("Select the target variable:", df_training.columns)
@@ -454,9 +449,9 @@ if df_training is not None:
 else:
     st.write("No training data uploaded.")
 
-# --- Header 1: Best Model Results ---
-st.header("Best Model Results with all features")
-col1, col2, col3 = st.columns(3)
+# --- Header 1: Model Results ---
+st.header("Running Model with all features")
+
 
 if df_training is not None:
     try:          
@@ -464,143 +459,207 @@ if df_training is not None:
         # Train a Linear Regression model (you can replace with your best model)
         rf_model = RandomForestRegressor(random_state=42,n_estimators= 200)
                     
-        model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_processed,
+        model_v1, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_processed,
                                                                                          y_train,
                                                                                          X_test_processed,
                                                                                          y_test, _model=rf_model)
-        save_model_pickle(model, 'model_features_all.pkl')
-
-        with col1:
-            col1.subheader("Model")
-            st.write(f"Params: {model.get_params}")
-
-     
-        with col2:
-            col2.subheader("CV Training Results")
-            st.write(f"CV RMSE: {cv_rmse:.2f}")
-            st.write(f"CV R2: {cv_r2:.2f}")
-            st.write(f"Rows in Set: {X_train_processed.shape[0]}")
-
-        with col3:
-            col3.subheader("Testing Results")
-            st.write(f"Test RMSE: {test_rmse:.2f}")
-            st.write(f"Test R2: {test_r2:.2f}")
-            st.write(f"Rows in Set: {X_test_processed.shape[0]}")
-
-
-
-        with col1:
-            col1.subheader("Test Obs vs Pred")
-            fig_scatter, ax_scatter2 = plt.subplots()
-            plt.scatter(y_test, y_pred_test)
-            plt.xlabel("y_observed")
-            plt.ylabel("y_predicted")
-            st.pyplot(fig_scatter)
-
-        with col2:
-            col2.subheader("Test Standard Errors")
-            fig_hist2, ax_hist = plt.subplots()
-            sns.histplot(errors_test_standard)
-            plt.xlabel ("standard errors \n y_true - y_pred")
-            plt.ylabel ("Frequency")
-            st.pyplot(fig_hist2)
         
+        # The model object is now in this variable:
+        my_trained_model_v1 = model_v1
+
+        # --- Streamlit UI for saving ---
+        st.write(f"The model {my_trained_model_v1} will be stored into the local directory.")
+
+        model_base_name_v1 = st.text_input(
+        "Please write a name for your model file:",
+        value="my_model_all_features",
+        key = "key1"
+        )
+
+        if st.button("Save First Model"):
+
+            if not model_base_name_v1.strip():
+                st.warning("Please enter a base name for the model file.")
+            else:
+                # Generate the unique filename with timestamp
+                filename_v1 = get_timestamped_filename(model_base_name_v1.strip())
+                
+                # When you only provide a filename, it saves to the current directory.
+                full_path_to_save = filename_v1
+
+            # Save the model object using pickle
+            with open(full_path_to_save, 'wb') as file: # 'wb' for write binary
+                pickle.dump(my_trained_model_v1, file)
+                file.close()            
+                st.success(f"Model successfully saved to: `{full_path_to_save}`")
 
         try:
+
+            st.subheader("Model Evaluation")
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                col1.subheader("Model")
+                st.write(f"Params: {model_v1.get_params}")
+
+        
+            with col2:
+                col2.subheader("CV Training Results")
+                st.write(f"CV RMSE: {cv_rmse:.2f}")
+                st.write(f"CV R2: {cv_r2:.2f}")
+                st.write(f"Rows in Set: {X_train_processed.shape[0]}")
+
+            with col3:
+                col3.subheader("Testing Results")
+                st.write(f"Test RMSE: {test_rmse:.2f}")
+                st.write(f"Test R2: {test_r2:.2f}")
+                st.write(f"Rows in Set: {X_test_processed.shape[0]}")
+
+
+
+            with col1:
+                col1.subheader("Test Obs vs Pred")
+                fig_scatter, ax_scatter2 = plt.subplots()
+                plt.scatter(y_test, y_pred_test)
+                plt.xlabel("y_observed")
+                plt.ylabel("y_predicted")
+                st.pyplot(fig_scatter)
+
+            with col2:
+                col2.subheader("Test Standard Errors")
+                fig_hist2, ax_hist = plt.subplots()
+                sns.histplot(errors_test_standard)
+                plt.xlabel ("standard errors \n y_true - y_pred")
+                plt.ylabel ("Frequency")
+                st.pyplot(fig_hist2)
+
+            st.subheader("Feature Importances")
             # Get feature importances, sort them, and create a DataFrame
-            sorted_indices = np.argsort(model.feature_importances_)[::-1]
+            sorted_indices = np.argsort(my_trained_model_v1.feature_importances_)[::-1]
             sorted_features = X_test_processed.columns.values[sorted_indices]
-            sorted_importances = model.feature_importances_[sorted_indices]
+            sorted_importances = my_trained_model_v1.feature_importances_[sorted_indices]
             sorted_importances_df = pd.DataFrame(sorted_importances, index=sorted_features, columns=['Importance'])
 
-            # Display the title of the plot
-            st.title("Feature Importances")
+
             # Use Streamlit to create a bar chart
             st.bar_chart(sorted_importances_df)
 
             # Add a caption
-            st.caption("Bar chart of feature importances from the Random Forest Model")
+            st.caption(f"Bar chart of feature importances from the model name: {filename_v1}")
+        
 
         except Exception as e:
-            st.error(f"An error occurred: {e}")
-            st.stop()
+            st.error(f"An error in plots display: {e}")
+    
                 
     except KeyError as e:
-        st.error(f"KeyError: {e}.  Ensure the 'Age' and 'Spending' columns exist in the customer data, and that you have a target variable.  Adjust the column names as needed.")
+        st.error(f"KeyError: {e}. Adjust the column names as needed.")
     except Exception as e:
         st.error(f"An error occurred during model training/evaluation: {e}")
 else:
     st.write("No training data uploaded.")
 
 # --- Header 2: Model Results with Selected Features ---
-st.header("Model Results with Selected Features")
+st.header("Running Model with Selected Features")
 
 
-if df_training is not None:
+if model_v1 is not None:
     try:
-        X_train_sel, X_test_sel, selected_features = select_features(X_train_processed,X_test_processed,importance_threshold=0.10)
-        model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_sel,
+        X_train_sel, X_test_sel, selected_features = select_features(X_train_processed,X_test_processed,importance_threshold=0.10, _model = model_v1)
+        model_v2, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_sel,
                                                                                          y_train,
                                                                                          X_test_sel,
                                                                                          y_test, _model=rf_model)
-        st.write(f"Selected Features for new model \n:{selected_features}")
-        
-        save_model_pickle(model, 'model_features_cutoff010.pkl')
 
-        col4, col5, col6 = st.columns(3)
 
-        with col4:
-            col4.subheader("Model")
-            st.write(f"Params: {model.get_params}")
+        # The model object is now in this variable:
+        my_trained_model_v2 = model_v2
 
-     
-        with col5:
-            col5.subheader("CV Training Results")
-            st.write(f"CV RMSE: {cv_rmse:.2f}")
-            st.write(f"CV R2: {cv_r2:.2f}")
-            st.write(f"Rows in Set: {X_train_sel.shape[0]}")
+        # --- Streamlit UI for saving ---
+        st.write(f"The model {my_trained_model_v2} will be stored into the local directory.")
 
-        with col6:
-            col6.subheader("Testing Results")
-            st.write(f"Test RMSE: {test_rmse:.2f}")
-            st.write(f"Test R2: {test_r2:.2f}")
-            st.write(f"Rows in Set: {X_test_sel.shape[0]}")
+        model_base_name_v2 = st.text_input(
+        "Please write a name for your model file:",
+        value="my_model_selected_features",
+        key = "key2"
+        )
 
-        with col4:
-            col4.subheader("Test Obs vs Pred")
-            fig_scatter, ax_scatter2 = plt.subplots()
-            plt.scatter(y_test, y_pred_test)
-            plt.xlabel("y_observed")
-            plt.ylabel("y_predicted")
-            st.pyplot(fig_scatter)
+        if st.button("Save Second Model"):
 
-        with col5:
-            col5.subheader("Test Standard Errors")
-            fig_hist2, ax_hist = plt.subplots()
-            sns.histplot(errors_test_standard)
-            plt.xlabel ("standard errors \n y_true - y_pred")
-            plt.ylabel ("Frequency")
-            st.pyplot(fig_hist2)
-        
+            if not model_base_name_v2.strip():
+                st.warning("Please enter a base name for the model file.")
+            else:
+                # Generate the unique filename with timestamp
+                filename_v2 = get_timestamped_filename(model_base_name_v2.strip())
+                
+                # When you only provide a filename, it saves to the current directory.
+                full_path_to_save = filename_v2
+
+            # Save the model object using pickle
+            with open(full_path_to_save, 'wb') as file: # 'wb' for write binary
+                pickle.dump(my_trained_model_v2, file)
+                file.close()            
+                st.success(f"Model successfully saved to: `{full_path_to_save}`")
+
 
         try:
+
+            st.subheader("Model Evaluation")
+            st.write(f"Selected Features for new model \n:{selected_features}")
+
+            col5, col6, col7 = st.columns(3)
+
+            with col5:
+                col5.subheader("Model")
+                st.write(f"Params: {model_v2.get_params}")
+
+        
+            with col6:
+                col6.subheader("CV Training Results")
+                st.write(f"CV RMSE: {cv_rmse:.2f}")
+                st.write(f"CV R2: {cv_r2:.2f}")
+                st.write(f"Rows in Set: {X_train_processed.shape[0]}")
+
+            with col7:
+                col7.subheader("Testing Results")
+                st.write(f"Test RMSE: {test_rmse:.2f}")
+                st.write(f"Test R2: {test_r2:.2f}")
+                st.write(f"Rows in Set: {X_test_sel.shape[0]}")
+
+            with col5:
+                col5.subheader("Test Obs vs Pred")
+                fig_scatter, ax_scatter2 = plt.subplots()
+                plt.scatter(y_test, y_pred_test)
+                plt.xlabel("y_observed")
+                plt.ylabel("y_predicted")
+                st.pyplot(fig_scatter)
+
+            with col6:
+                col6.subheader("Test Standard Errors")
+                fig_hist2, ax_hist = plt.subplots()
+                sns.histplot(errors_test_standard)
+                plt.xlabel ("standard errors \n y_true - y_pred")
+                plt.ylabel ("Frequency")
+                st.pyplot(fig_hist2)
+
+
+            st.subheader("Feature Importances")
             # Get feature importances, sort them, and create a DataFrame
-            sorted_indices = np.argsort(model.feature_importances_)[::-1]
+            sorted_indices = np.argsort(my_trained_model_v2.feature_importances_)[::-1]
             sorted_features = X_test_sel.columns.values[sorted_indices]
-            sorted_importances = model.feature_importances_[sorted_indices]
+            sorted_importances = my_trained_model_v2.feature_importances_[sorted_indices]
             sorted_importances_df = pd.DataFrame(sorted_importances, index=sorted_features, columns=['Importance'])
 
-            # Display the title of the plot
-            st.title("Feature Importances")
+
             # Use Streamlit to create a bar chart
             st.bar_chart(sorted_importances_df)
 
             # Add a caption
-            st.caption("Bar chart of feature importances from the Random Forest Model with selected features")
-
+            st.caption(f"Bar chart of feature importances from the model name: {filename_v2}")
+            
         except Exception as e:
-            st.error(f"An error occurred: {e}")
-            st.stop()
+            st.error(f"An error occurred while saving the model: {e}")
 
 
     except KeyError as e:
@@ -615,8 +674,8 @@ st.header("Predicted New Data Values")
 
 if df_training is not None:
     try:
-        #  Reuse the model from Header 2
-        new_data_input = upload_csv("Secod Step.Upload New Data for Predictions") # added file uploader
+        #  Load new Data
+        new_data_input = upload_csv("Secod Step. Upload New Data for Predictions") # added file uploader
         if new_data_input is not None:
 
             # Initial Preprocessing
@@ -632,7 +691,7 @@ if df_training is not None:
             user_choice = st.radio("Select your answer:",("Yes", "No"),index=None, key="yes_no_selector")
 
             #Load Images
-            if user_choice is "Yes":
+            if user_choice == "Yes":
 
                 st.write("After image display, the predictions will be estimated.")                    
 
@@ -657,7 +716,7 @@ if df_training is not None:
                         except Exception as e:
                             st.error(f"Could not load image {os.path.basename(image_path)}: {e}")             
                 
-            elif user_choice is "No":
+            elif user_choice == "No":
 
                 st.write("The predictions will be estimated.")
             
@@ -684,20 +743,20 @@ if df_training is not None:
 
 
                 
-                y_pred = model.predict(X_pred)
+                y_pred = model_v2.predict(X_pred)
                 predictions_df = pd.DataFrame({'target': y_pred})
 
                 # Add other columns from the new data input to the output DataFrame
                 predictions_and_vars_df = pd.concat([predictions_df, new_data_input], axis=1)
 
                 # Create Columns to display predictions
-                col7, col8  = st.columns(2)
+                col9, col10  = st.columns(2)
 
-                with col7:
-                    col7.subheader("Predicted target")
+                with col9:
+                    col9.subheader("Predicted target")
                     st.dataframe(predictions_df.head())
-                with col8:
-                    col8.subheader("Predicted target Distribution")
+                with col10:
+                    col10.subheader("Predicted target Distribution")
                     fig_pred_dist, ax_pred_dist = plt.subplots()
                     sns.histplot(predictions_df['target'], kde=True, ax=ax_pred_dist)
                     st.pyplot(fig_pred_dist)
@@ -706,11 +765,11 @@ if df_training is not None:
                 st.dataframe(predictions_and_vars_df.head())
 
         else:
-            st.write("Please upload new data to get predictions.")
+            st.write("Please on the left menu, upload new data to get predictions.")
 
     except KeyError as e:
         st.error(f"KeyError: {e}.  Ensure the uploaded data contains the columns: {selected_features}.  These are the features the model was trained on.")
     except Exception as e:
         st.error(f"An error occurred while generating predictions: {e}")
 else:
-    st.write("No testing data uploaded.")
+    st.write("No new data uploaded.")
