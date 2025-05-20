@@ -8,14 +8,33 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import pearsonr
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+import pickle
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
 
+# --- Save ML Models ---
+
+def save_model_pickle(model, filename):
+    """
+    Saves a trained machine learning model to a file using pickle.
+
+    Args:
+        model: The trained machine learning model to be saved.
+        filename (str): The name of the file where the model will be saved.
+            It is recommended to use a '.pkl' extension.
+    """
+    try:
+        with open(filename, 'wb') as file:
+            pickle.dump(model, file)
+        print(f"Model successfully saved to {filename}")
+    except Exception as e:
+        print(f"Error saving model: {e}")
+
 # --- Select Features ---
 
 def select_features(X_train_processed, X_test_processed,
-                             importance_threshold=0.015, prefix_to_drop='unimportant_',
+                             importance_threshold=0.010, prefix_to_drop='unimportant_',
                               ):
     """
     Selects important features based on Random Forest feature importances,
@@ -59,9 +78,9 @@ def select_features(X_train_processed, X_test_processed,
         X_test_final = X_test_selected.drop(columns=columns_to_drop,
                                             errors='ignore')
 
-        print("Selected Important Features:", X_train_final.columns.to_list()) 
+        selected_features = X_train_final.columns.to_list() 
 
-        return X_train_final, X_test_final
+        return X_train_final, X_test_final, selected_features
 
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -223,6 +242,7 @@ def get_significant_correlations(df, target_variable=None, alpha=0.05):
     return correlations_df
 
 # --- Function to Get Numerical and Categorical Vars ---
+
 def get_numeric_categorical_variables(df):
     """
     Gets numeric and categorical variables from a Pandas DataFrame.
@@ -446,6 +466,7 @@ if df_training is not None:
                                                                                          y_train,
                                                                                          X_test_processed,
                                                                                          y_test, model=rf_model)
+        save_model_pickle(model, 'model_features_all.pkl')
 
         with col1:
             col1.subheader("Model")
@@ -515,11 +536,15 @@ col4, col5, col6 = st.columns(3)
 
 if df_training is not None:
     try:
-        X_train_sel, X_test_sel = select_features(X_train_processed,X_test_processed,importance_threshold=0.10)
+        X_train_sel, X_test_sel, selected_features = select_features(X_train_processed,X_test_processed,importance_threshold=0.10)
         model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_sel,
                                                                                          y_train,
                                                                                          X_test_sel,
                                                                                          y_test, model=rf_model)
+        st.write(f"Selected Features for new model \n:{selected_features}")
+        
+        save_model_pickle(model, 'model_features_cutoff010.pkl')
+
         with col4:
             col4.subheader("Model")
             st.write(f"Params: {model.get_params}")
@@ -575,14 +600,14 @@ if df_training is not None:
 
 
     except KeyError as e:
-        st.error(f"KeyError: {e}.  Ensure the necessary columns exist in the customer data.  Currently using 'Age' and 'Age_Squared'.")
+        st.error(f"KeyError: {e}.  Ensure the necessary columns exist in the training data.")
     except Exception as e:
         st.error(f"An error occurred during model training/evaluation: {e}")
 else:
-    st.write("No customer data uploaded.")
+    st.write("No training data uploaded.")
 
 # --- Header 3: Predicted Values ---
-st.header("Predicted Values")
+st.header("Predicted New Data Values")
 col7, col8, col9 = st.columns(3)
 
 if df_training is not None:
@@ -590,6 +615,8 @@ if df_training is not None:
         #  Reuse the model from Header 2
         new_data = upload_csv("Upload New Data for Predictions") # added file uploader
         if new_data is not None:
+
+            #Preprocess
 
             X_pred = new_data[selected_features] # Use the features selected for the "best" model
             y_pred = model.predict(X_pred)
