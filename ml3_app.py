@@ -9,7 +9,8 @@ import seaborn as sns
 from scipy.stats import pearsonr
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 import pickle
-
+from PIL import Image
+import os
 # --- Page Configuration ---
 st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
 
@@ -373,7 +374,7 @@ def upload_csv(title):
     return None
 
 # --- Data Loading ---
-df_training = upload_csv("Upload Training Set CSV")
+df_training = upload_csv("First Step. Upload Training Set CSV")
 
 # --- Main Content ---
 st.title("ML model Data Analysis Dashboard")
@@ -608,35 +609,96 @@ else:
 
 # --- Header 3: Predicted Values ---
 st.header("Predicted New Data Values")
-col7, col8, col9 = st.columns(3)
 
 if df_training is not None:
     try:
         #  Reuse the model from Header 2
-        new_data = upload_csv("Upload New Data for Predictions") # added file uploader
-        if new_data is not None:
+        new_data_input = upload_csv("Secod Step.Upload New Data for Predictions") # added file uploader
+        if new_data_input is not None:
 
-            #Preprocess
+            # Initial Preprocessing
+            new_data = process_and_clean_data(new_data_input)
 
-            X_pred = new_data[selected_features] # Use the features selected for the "best" model
-            y_pred = model.predict(X_pred)
-            predictions_df = pd.DataFrame({'Predicted Spending': y_pred})
+            # Target variable selection
+            new_excluded_variables  = st.sidebar.selectbox("Select the variables to exclude::", new_data.columns)
+            # Exclude variables 
+            new_path_img_variable = st.sidebar.selectbox("Select column with path to images:", new_data.columns)
 
-            # Add other columns from the new data to the output DataFrame
-            other_cols = [col for col in new_data.columns if col not in selected_features]
-            predictions_df = pd.concat([predictions_df, new_data[other_cols]], axis=1)
+            # Ask user if process images
+            st.write("The model doesn't predict image class, do you  want to see the images from the uploaded newdata :")
+            user_choice = st.radio("Select your answer:",("Yes", "No"),index=None, key="yes_no_selector")
 
-            with col7:
-                col7.subheader("Predicted Spending")
-                st.dataframe(predictions_df.head())
-            with col8:
-                col8.subheader("Predicted Spending Distribution")
-                fig_pred_dist, ax_pred_dist = plt.subplots()
-                sns.histplot(predictions_df['Predicted Spending'], kde=True, ax=ax_pred_dist)
-                st.pyplot(fig_pred_dist)
-            with col9:
-                col9.subheader("New Data")
-                st.dataframe(new_data.head())
+            #Load Images
+            if user_choice is "Yes":                    
+
+                # --- Create 5 columns ---
+                # This allows us to cycle through them
+                columns = st.columns(5) # This creates exactly 5 columns of equal width
+
+                # --- Iterate through images and place them in columns ---
+                for i, image_path in enumerate(new_data[new_path_img_variable]):
+                    # Determine which column to place the current image in
+                    # The modulo operator (%) cycles through the columns (0, 1, 2, 3, 4, 0, 1, ...)
+                    col = columns[i % 5]
+
+                    with col: # Use the 'with' syntax to place elements into the specific column
+                        try:
+                            # Open image with Pillow for consistency and to handle potential issues
+                            img = Image.open(image_path)
+                            resized_img = img.resize((100, 100))
+                            st.image(resized_img, caption="", width=100)
+                            st.write("The predictions will be estimated:")
+
+                        except Exception as e:
+                            st.error(f"Could not load image {os.path.basename(image_path)}: {e}")             
+                
+            elif user_choice is "No":
+
+                st.write("The predictions will be estimated:")
+            
+            else:
+
+                st.warning("Please select an answer ")
+
+            if user_choice is not None:
+
+
+                # Drop columns
+                new_data = drop_variables (new_data, [new_excluded_variables])
+
+                # Get numerical and categorical variables
+                num_vars_nd, cat_vars_nd = get_numeric_categorical_variables(new_data)
+
+                new_data_processed = preprocess_data(new_data,cat_vars_nd,num_vars_nd)
+
+                st.subheader("New Data Set One Hot Encoding and Standard Transformation ")  
+                st.dataframe(new_data_processed.describe())  
+
+                #Preprocess
+                X_pred = new_data_processed[selected_features] # Use the features selected for the "best" model
+
+
+                
+                y_pred = model.predict(X_pred)
+                predictions_df = pd.DataFrame({'target': y_pred})
+
+                # Add other columns from the new data input to the output DataFrame
+                predictions_and_vars_df = pd.concat([predictions_df, new_data_input], axis=1)
+
+                # Create Columns to display predictions
+                col7, col8  = st.columns(2)
+
+                with col7:
+                    col7.subheader("Predicted target")
+                    st.dataframe(predictions_df.head())
+                with col8:
+                    col8.subheader("Predicted target Distribution")
+                    fig_pred_dist, ax_pred_dist = plt.subplots()
+                    sns.histplot(predictions_df['target'], kde=True, ax=ax_pred_dist)
+                    st.pyplot(fig_pred_dist)
+
+                st.subheader("New Data Set with predictions")  
+                st.dataframe(predictions_and_vars_df.head())
 
         else:
             st.write("Please upload new data to get predictions.")
@@ -646,4 +708,4 @@ if df_training is not None:
     except Exception as e:
         st.error(f"An error occurred while generating predictions: {e}")
 else:
-    st.write("No customer data uploaded.")
+    st.write("No testing data uploaded.")
