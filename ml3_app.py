@@ -12,6 +12,61 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 # --- Page Configuration ---
 st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
 
+# --- Select Features ---
+
+def select_features(X_train_processed, X_test_processed,
+                             importance_threshold=0.015, prefix_to_drop='unimportant_',
+                              ):
+    """
+    Selects important features based on Random Forest feature importances,
+    evaluates a model (default: RandomForestRegressor) with cross-validation,
+    and reports performance on the test set.
+
+    Args:
+        X_train_processed (pd.DataFrame): Preprocessed training data.
+        X_test_processed (pd.DataFrame): Preprocessed testing data.
+        importance_threshold (float, optional): Threshold for feature importance.
+            Defaults to 0.015.
+        prefix_to_drop (str, optional): Prefix of columns to drop.
+            Defaults to 'unimportant_'. 
+
+    Returns:
+
+        - pd.DataFrame: DataFrame with selected features for training.
+        - pd.DataFrame: DataFrame with selected features for testing.
+    
+    """
+    try:
+        
+        feature_importances = pd.Series(model.feature_importances_,
+                                        index=X_train_processed.columns)
+
+        # Select important features
+        important_features = feature_importances[
+            feature_importances >= importance_threshold].index.tolist()
+
+        # Create new DataFrames with only the important features
+        X_train_selected = X_train_processed[important_features]
+        X_test_selected = X_test_processed[important_features]
+
+        # Drop columns with the specified prefix
+        columns_to_drop = [
+            col for col in X_train_selected.columns
+            if col.startswith(prefix_to_drop) or col.startswith('image_')
+        ]
+        X_train_final = X_train_selected.drop(columns=columns_to_drop,
+                                              errors='ignore')
+        X_test_final = X_test_selected.drop(columns=columns_to_drop,
+                                            errors='ignore')
+
+        print("Selected Important Features:", X_train_final.columns.to_list()) 
+
+        return X_train_final, X_test_final
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None, None, None
+
 # --- Function to Train and Evaluate ML model  ---
 
 def evaluate_model(X_train, y_train, X_test, y_test, model=None):
@@ -334,17 +389,20 @@ if df_training is not None:
          
         with col2:
             # Plot Variables with high correlation
-            col2.subheader("Scatter Plot of Predictions vs Actual")
+            col2.subheader("Correlated Features")
             fig_scatter, ax_scatter = plt.subplots()
             plt.scatter(df_training[var1], df_training[var2])
             plt.xlabel(var1)
             plt.ylabel(var2)
             st.pyplot(fig_scatter)
+            st.write(f"Feature: {var1} is redundant and will be removed")
 
         with col3:
-            # Plot Variables with high correlation
-            col3.subheader("Summary")
-            st.write(f"Feature: {var1} is redundant and will be removed")
+            # Plot Variables with high correlation                      
+            col3.subheader("Target Variable")
+            fig_hist, ax_hist = plt.subplots()
+            sns.histplot(df_training[target_variable], kde=True, ax=ax_hist)  # Use the target variable
+            st.pyplot(fig_hist)
            
         df_training = drop_variables(df_training, [var1])
 
@@ -406,22 +464,18 @@ if df_training is not None:
             st.write(f"Test R2: {test_r2:.2f}")
             st.write(f"Rows in Set: {X_test_processed.shape[0]}")
 
-        with col1:
-            col1.subheader("Target Variable")
-            fig_hist, ax_hist = plt.subplots()
-            sns.histplot(y, kde=True, ax=ax_hist)  # Use the 'y' variable
-            st.pyplot(fig_hist)
 
-        with col2:
-            col2.subheader("Test Obs vs Pred")
+
+        with col1:
+            col1.subheader("Test Obs vs Pred")
             fig_scatter, ax_scatter2 = plt.subplots()
             plt.scatter(y_test, y_pred_test)
             plt.xlabel("y_observed")
             plt.ylabel("y_predicted")
             st.pyplot(fig_scatter)
 
-        with col3:
-            col3.subheader("Test Standard Errors")
+        with col2:
+            col2.subheader("Test Standard Errors")
             fig_hist2, ax_hist = plt.subplots()
             sns.histplot(errors_test_standard)
             plt.xlabel ("standard errors \n y_true - y_pred")
@@ -461,53 +515,65 @@ col4, col5, col6 = st.columns(3)
 
 if df_training is not None:
     try:
-        # Feature selection (example: using 'Age' and a created 'Age_Squared' feature)
-        df_training['Age_Squared'] = df_training['Age']**2
-        selected_features = ['Age', 'Age_Squared']
-        X = df_training[selected_features]
-        y = df_training['Spending']
-
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-        # Train model
-        model = LinearRegression()  # Or your chosen model
-        model.fit(X_train, y_train)
-
-        # Cross-validation
-        cv_scores_rmse = cross_val_score(model, X_train, y_train, cv=5, scoring='neg_mean_squared_error')
-        cv_scores_r2 = cross_val_score(model, X_train, y_train, cv=5, scoring='r2')
-
-        # Test set performance
-        y_pred_test = model.predict(X_test)
-        test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
-        test_r2 = r2_score(y_test, y_pred_test)
-
+        X_train_sel, X_test_sel = select_features(X_train_processed,X_test_processed,importance_threshold=0.10)
+        model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_sel,
+                                                                                         y_train,
+                                                                                         X_test_sel,
+                                                                                         y_test, model=rf_model)
         with col4:
-            col4.subheader("CV Training Results")
-            st.write(f"CV RMSE: {np.mean(np.sqrt(-cv_scores_rmse)):.2f}")
-            st.write(f"CV R2: {np.mean(cv_scores_r2):.2f}")
-            col4.subheader("Testing Results")
-            st.write(f"Test RMSE: {test_rmse:.2f}")
-            st.write(f"Test R2: {test_r2:.2f}")
+            col4.subheader("Model")
+            st.write(f"Params: {model.get_params}")
 
+     
         with col5:
-            col5.subheader("Histogram of Residuals")
-            fig_resid, ax_resid = plt.subplots()
-            sns.histplot(y_test - y_pred_test, kde=True, ax=ax_resid)
-            plt.xlabel("Residuals")
-            st.pyplot(fig_resid)
+            col5.subheader("CV Training Results")
+            st.write(f"CV RMSE: {cv_rmse:.2f}")
+            st.write(f"CV R2: {cv_r2:.2f}")
+            st.write(f"Rows in Set: {X_train_sel.shape[0]}")
 
         with col6:
-            col6.subheader("Bar Plot of Feature Importance")
-            fig_bar, ax_bar = plt.subplots()
-            # Get feature names and coefficients.  This assumes a linear model.
-            feature_names = selected_features
-            coefficients = model.coef_
-            sns.barplot(x=feature_names, y=coefficients, ax=ax_bar)
-            plt.xlabel("Feature")
-            plt.ylabel("Coefficient")
-            st.pyplot(fig_bar)
+            col6.subheader("Testing Results")
+            st.write(f"Test RMSE: {test_rmse:.2f}")
+            st.write(f"Test R2: {test_r2:.2f}")
+            st.write(f"Rows in Set: {X_test_sel.shape[0]}")
+
+        with col4:
+            col4.subheader("Test Obs vs Pred")
+            fig_scatter, ax_scatter2 = plt.subplots()
+            plt.scatter(y_test, y_pred_test)
+            plt.xlabel("y_observed")
+            plt.ylabel("y_predicted")
+            st.pyplot(fig_scatter)
+
+        with col5:
+            col5.subheader("Test Standard Errors")
+            fig_hist2, ax_hist = plt.subplots()
+            sns.histplot(errors_test_standard)
+            plt.xlabel ("standard errors \n y_true - y_pred")
+            plt.ylabel ("Frequency")
+            st.pyplot(fig_hist2)
+        
+
+        try:
+            # Get feature importances, sort them, and create a DataFrame
+            sorted_indices = np.argsort(model.feature_importances_)[::-1]
+            sorted_features = X_test_sel.columns.values[sorted_indices]
+            sorted_importances = model.feature_importances_[sorted_indices]
+            sorted_importances_df = pd.DataFrame(sorted_importances, index=sorted_features, columns=['Importance'])
+
+            # Display the title of the plot
+            st.title("Feature Importances")
+            # Use Streamlit to create a bar chart
+            st.bar_chart(sorted_importances_df)
+
+            # Add a caption
+            st.caption("Bar chart of feature importances from the Random Forest Model with selected features")
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            st.stop()
+
+
     except KeyError as e:
         st.error(f"KeyError: {e}.  Ensure the necessary columns exist in the customer data.  Currently using 'Age' and 'Age_Squared'.")
     except Exception as e:
