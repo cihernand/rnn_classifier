@@ -12,8 +12,47 @@ import pickle
 from PIL import Image
 import os
 import datetime
+import io  # Required to handle the uploaded file's content as bytes
 # --- Page Configuration ---
 st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
+
+# Fuction to load pickle file
+
+# --- Define the function to load the pickle file ---
+def load_uploaded_pickle(uploaded_file_object):
+    """
+    Loads a Python object from an uploaded Streamlit file object (a .pkl file).
+
+    Args:
+        uploaded_file_object: The UploadedFile object received from st.file_uploader.
+
+    Returns:
+        object: The Python object loaded from the pickle file.
+                Returns None if an error occurs during loading.
+    Raises:
+        pickle.UnpicklingError: If the file content cannot be unpickled.
+        Exception: For any other unexpected errors.
+    """
+    if uploaded_file_object is None:
+        return None
+
+    bytes_data = uploaded_file_object.read()
+    try:
+        # Use io.BytesIO to create an in-memory binary stream from the bytes_data.
+        # This is the robust way to pass uploaded file content to pickle.load().
+        loaded_object = pickle.load(io.BytesIO(bytes_data))
+        return loaded_object
+    except pickle.UnpicklingError as e:
+        # This error occurs if the file is not a valid pickle or incompatible
+        st.error(f"❌ Error: Could not unpickle the file. This often happens if the file is corrupted, not a valid pickle file, or was created with a different Python/library version than this app uses. Details: `{e}`")
+        st.warning("Please ensure the `.pkl` file was created correctly and all necessary libraries (like `scikit-learn`) are installed in this app's environment.")
+        return None
+    except Exception as e:
+        # Catch any other unexpected errors during the loading process
+        st.error(f"An unexpected error occurred while loading the file: `{e}`")
+        st.warning("Double-check that the file is a valid Python pickle and that all required libraries are installed.")
+        return None
+
 
 # --- Function to generate a timestamped filename ---
 def get_timestamped_filename(base_name="model", extension=".pkl"):
@@ -670,14 +709,86 @@ else:
     st.write("No training data uploaded.")
 
 # --- Header 3: Predicted Values ---
-st.header("Predicted New Data Values")
+st.header("Analize New Data Values")
 
 if df_training is not None:
     try:
-        #  Load new Data
-        new_data_input = upload_csv("Secod Step. Upload New Data for Predictions") # added file uploader
-        if new_data_input is not None:
+        loaded_object = None
 
+        if loaded_object is None:
+            # --- Streamlit App Layout ---
+            st.write("Upload your trained model in Pickle Format `.pkl` from your local computer.")
+
+            # Initialize 'loaded_object' in session_state to persist the loaded object
+            # across Streamlit reruns for the current user's session.
+            if 'loaded_object' not in st.session_state:
+                st.session_state.loaded_object = None
+
+            # --- File Uploader Widget ---
+            # Allows the user to select a .pkl file.
+            # The 'type=["pkl"]' argument filters the file selection dialog.
+            uploaded_file = st.file_uploader(
+                "Choose a `.pkl` file",
+                type=["pkl"],
+                help="Select a Python pickle file (your preferred trained ML model)."
+            )
+
+            if uploaded_file is not None:
+                # --- File has been uploaded ---
+
+                # Display the name of the uploaded file
+                st.success(f"File **'{uploaded_file.name}'** uploaded successfully!")
+
+                # Call the new function to load the pickle file
+                loaded_object = load_uploaded_pickle(uploaded_file)
+
+                if loaded_object is not None:
+                    # Store the loaded object in Streamlit's session_state.
+                    # This is crucial for the object to persist across Streamlit reruns.
+                    st.session_state.loaded_object = loaded_object
+
+
+                    # --- ML Model Checks and Interaction ---
+                    # Check if the loaded object has a 'predict' method, common for ML models.
+                    if hasattr(loaded_object, 'predict') and callable(getattr(loaded_object, 'predict')):
+                        
+                        st.write("Model Details:")
+                        # Only display specific attributes if it's a RandomForestRegressor
+                        if isinstance(loaded_object, RandomForestRegressor):
+                            st.write(f"- Model Type: `RandomForestRegressor`")
+                            st.write(f"- Number of estimators: `{loaded_object.n_estimators}`")
+                            st.write(f"- Random state: `{loaded_object.random_state}`")
+                        else:
+                            st.write(f"- Specific model type: `{type(loaded_object).__name__}`")
+                            st.write("No specific attributes displayed for this model type (not a RandomForestRegressor).")
+
+                    else:
+                        st.warning("The uploaded file does not appear to be a common machine learning model (no `predict` method found).")
+                        # For other types of objects, display a string representation
+                        st.markdown("---")
+                        st.subheader("Object Details (First 500 characters of representation):")
+                        try:
+                            st.code(str(loaded_object)[:500])
+                        except Exception:
+                            st.info("Could not display object representation.")
+
+            else:
+                st.info("Upload a `.pkl` file to begin. Once uploaded, the object will be loaded and available for use.")
+
+            
+            if st.session_state.loaded_object:
+                st.write(f"A model is currently loaded in your session.")
+                if st.button("Clear Model", key="clear_button"):
+                    st.session_state.loaded_object = None
+                    st.rerun() # Force a rerun to update the display and clear the object
+            else:
+                st.write("No object is currently loaded in your session.")
+
+            st.header("Predictions with  New DataSet")
+
+            #  Load new Data, added file uploader
+            new_data_input = upload_csv("Secod Step. Upload New Data for Predictions") 
+            
             # Initial Preprocessing
             new_data = process_and_clean_data(new_data_input)
 
@@ -743,7 +854,7 @@ if df_training is not None:
 
 
                 
-                y_pred = model_v2.predict(X_pred)
+                y_pred = loaded_object.predict(X_pred)
                 predictions_df = pd.DataFrame({'target': y_pred})
 
                 # Add other columns from the new data input to the output DataFrame
@@ -770,6 +881,6 @@ if df_training is not None:
     except KeyError as e:
         st.error(f"KeyError: {e}.  Ensure the uploaded data contains the columns: {selected_features}.  These are the features the model was trained on.")
     except Exception as e:
-        st.error(f"An error occurred while generating predictions: {e}")
+        st.error(f"Please on the left menu, upload new data to get predictions {e}")
 else:
     st.write("No new data uploaded.")
