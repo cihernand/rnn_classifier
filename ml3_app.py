@@ -550,7 +550,7 @@ if df_training is not None:
         
 
         except Exception as e:
-            st.error(f"An error in plots display: {e}")
+            st.error(f"Remember to click save model: {e}")
     
                 
     except KeyError as e:
@@ -659,7 +659,7 @@ if model_v1 is not None:
             st.caption(f"Bar chart of feature importances from the model name: {filename_v2}")
             
         except Exception as e:
-            st.error(f"An error occurred while saving the model: {e}")
+            st.error(f"Remember to click save model: {e}")
 
 
     except KeyError as e:
