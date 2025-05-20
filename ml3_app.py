@@ -88,8 +88,9 @@ def select_features(X_train_processed, X_test_processed,
         return None, None, None
 
 # --- Function to Train and Evaluate ML model  ---
-
-def evaluate_model(X_train, y_train, X_test, y_test, model=None):
+# This caches the model so it's not re-trained on every rerun with the same params
+@st.cache_data
+def evaluate_model(X_train, y_train, X_test, y_test, _model=None):
     """
     Evaluates a regression model using cross-validation on the training set
     and reports performance on the testing set.
@@ -99,7 +100,7 @@ def evaluate_model(X_train, y_train, X_test, y_test, model=None):
         y_train (pd.Series): Training target variable.
         X_test (pd.DataFrame):  testing features.
         y_test (pd.Series): Testing target variable.
-        model: A pre-initialized regression model.  Defaults to a RandomForestRegressor.
+        _model: A pre-initialized regression model.  Defaults to a RandomForestRegressor.
                If None, a RandomForestRegressor is initialized with
                random_state=42 and n_estimators=200.
 
@@ -113,23 +114,23 @@ def evaluate_model(X_train, y_train, X_test, y_test, model=None):
             Returns None if an error occurs.
     """
     try:
-        if model is None:
-            model = RandomForestRegressor(random_state=42,
+        if _model is None:
+            _model = RandomForestRegressor(random_state=42,
                                           n_estimators=200)  # Default model
 
         # Model Training and Cross-validation
         cv = KFold(n_splits=5, shuffle=True,
                    random_state=42)  # Consistent CV
-        cv_scores_rmse = cross_val_score(model, X_train, y_train, cv=cv,
+        cv_scores_rmse = cross_val_score(_model, X_train, y_train, cv=cv,
                                          scoring='neg_mean_squared_error')
         cv_rmse = np.mean(
             np.sqrt(-cv_scores_rmse))  # Convert negative MSE to positive RMSE
-        cv_scores_r2 = cross_val_score(model, X_train, y_train, cv=cv,
+        cv_scores_r2 = cross_val_score(_model, X_train, y_train, cv=cv,
                                        scoring='r2')
         cv_r2 = cv_scores_r2.mean()
 
         # Testing Set Evaluation
-        test_model = model.fit(X_test, y_test) # Fit on the test set
+        test_model = _model.fit(X_test, y_test) # Fit on the test set
         y_pred_test = test_model.predict(X_test)
         test_rmse = root_mean_squared_error(y_test, y_pred_test)
         test_r2 = r2_score(y_test, y_pred_test)
@@ -137,7 +138,7 @@ def evaluate_model(X_train, y_train, X_test, y_test, model=None):
         errors_test_standard = StandardScaler().fit_transform(
             errors_test.values.reshape(-1, 1))
 
-        return model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard, y_pred_test
+        return _model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard, y_pred_test
     
     except Exception as e:
         print(f"An error occurred during model evaluation: {e}")
@@ -466,7 +467,7 @@ if df_training is not None:
         model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_processed,
                                                                                          y_train,
                                                                                          X_test_processed,
-                                                                                         y_test, model=rf_model)
+                                                                                         y_test, _model=rf_model)
         save_model_pickle(model, 'model_features_all.pkl')
 
         with col1:
@@ -533,7 +534,7 @@ else:
 
 # --- Header 2: Model Results with Selected Features ---
 st.header("Model Results with Selected Features")
-col4, col5, col6 = st.columns(3)
+
 
 if df_training is not None:
     try:
@@ -541,10 +542,12 @@ if df_training is not None:
         model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_sel,
                                                                                          y_train,
                                                                                          X_test_sel,
-                                                                                         y_test, model=rf_model)
+                                                                                         y_test, _model=rf_model)
         st.write(f"Selected Features for new model \n:{selected_features}")
         
         save_model_pickle(model, 'model_features_cutoff010.pkl')
+
+        col4, col5, col6 = st.columns(3)
 
         with col4:
             col4.subheader("Model")
@@ -629,7 +632,9 @@ if df_training is not None:
             user_choice = st.radio("Select your answer:",("Yes", "No"),index=None, key="yes_no_selector")
 
             #Load Images
-            if user_choice is "Yes":                    
+            if user_choice is "Yes":
+
+                st.write("After image display, the predictions will be estimated.")                    
 
                 # --- Create 5 columns ---
                 # This allows us to cycle through them
@@ -647,18 +652,18 @@ if df_training is not None:
                             img = Image.open(image_path)
                             resized_img = img.resize((100, 100))
                             st.image(resized_img, caption="", width=100)
-                            st.write("The predictions will be estimated:")
+                            
 
                         except Exception as e:
                             st.error(f"Could not load image {os.path.basename(image_path)}: {e}")             
                 
             elif user_choice is "No":
 
-                st.write("The predictions will be estimated:")
+                st.write("The predictions will be estimated.")
             
             else:
 
-                st.warning("Please select an answer ")
+                st.warning("Please select an answer.")
 
             if user_choice is not None:
 
