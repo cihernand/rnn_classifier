@@ -12,6 +12,62 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 # --- Page Configuration ---
 st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
 
+# --- Function to Train and Evaluate ML model  ---
+
+def evaluate_model(X_train, y_train, X_test, y_test, model=None):
+    """
+    Evaluates a regression model using cross-validation on the training set
+    and reports performance on the testing set.
+
+    Args:
+        X_train (pd.DataFrame):  training features.
+        y_train (pd.Series): Training target variable.
+        X_test (pd.DataFrame):  testing features.
+        y_test (pd.Series): Testing target variable.
+        model: A pre-initialized regression model.  Defaults to a RandomForestRegressor.
+               If None, a RandomForestRegressor is initialized with
+               random_state=42 and n_estimators=200.
+
+    Returns:
+        dict: A dictionary containing the following evaluation metrics:
+            'cv_rmse': Cross-validation RMSE on the training set.
+            'cv_r2': Cross-validation R-squared on the training set.
+            'test_rmse': RMSE on the testing set.
+            'test_r2': R-squared on the testing set.
+            'test_errors_standardized': Standardized errors on the testing set.
+            Returns None if an error occurs.
+    """
+    try:
+        if model is None:
+            model = RandomForestRegressor(random_state=42,
+                                          n_estimators=200)  # Default model
+
+        # Model Training and Cross-validation
+        cv = KFold(n_splits=5, shuffle=True,
+                   random_state=42)  # Consistent CV
+        cv_scores_rmse = cross_val_score(model, X_train, y_train, cv=cv,
+                                         scoring='neg_mean_squared_error')
+        cv_rmse = np.mean(
+            np.sqrt(-cv_scores_rmse))  # Convert negative MSE to positive RMSE
+        cv_scores_r2 = cross_val_score(model, X_train, y_train, cv=cv,
+                                       scoring='r2')
+        cv_r2 = cv_scores_r2.mean()
+
+        # Testing Set Evaluation
+        test_model = model.fit(X_test, y_test) # Fit on the test set
+        y_pred_test = test_model.predict(X_test)
+        test_rmse = root_mean_squared_error(y_test, y_pred_test)
+        test_r2 = r2_score(y_test, y_pred_test)
+        errors_test = y_test - y_pred_test
+        errors_test_standard = StandardScaler().fit_transform(
+            errors_test.values.reshape(-1, 1))
+
+        return model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard, y_pred_test
+    
+    except Exception as e:
+        print(f"An error occurred during model evaluation: {e}")
+        return None
+
 # --- Function to do OneHotEncoding and Standard Scaling ---
 
 def preprocess_data(X, categorical_features, numeric_features):
@@ -323,30 +379,15 @@ st.header("Best Model Results with all features")
 col1, col2, col3 = st.columns(3)
 
 if df_training is not None:
-    try:
-          
+    try:          
 
         # Train a Linear Regression model (you can replace with your best model)
-        model = RandomForestRegressor(random_state=42,n_estimators= 200)
-        model.fit(X_train_processed, y_train)
-
-             
-        # Cross-validation
-        cv = KFold(n_splits=5, shuffle=True, random_state=42)  # Consistent CV
-        cv_scores_rmse = cross_val_score(model,  X_train_processed, y_train, cv=cv, scoring='neg_mean_squared_error')
-        cv_rmse = np.mean(np.sqrt(-cv_scores_rmse))   # Convert negative MSE to positive RMSE
-        cv_scores_r2 = cross_val_score(model,  X_train_processed, y_train, cv=cv, scoring='r2')
-        cv_r2 = cv_scores_r2.mean()
-
-        # Testing Set
-        test_model = model.fit(X_test_processed, y_test)
-
-        # Evaluate the best model on the train set
-        y_pred_test = test_model.predict(X_test_processed)
-        test_rmse = root_mean_squared_error(y_test, y_pred_test)
-        test_r2  =r2_score(y_test, y_pred_test)
-        errors_test = y_test - y_pred_test
-        errors_test_standard = StandardScaler().fit_transform(errors_test.values.reshape(-1, 1))
+        rf_model = RandomForestRegressor(random_state=42,n_estimators= 200)
+                    
+        model, cv_rmse, cv_r2, test_rmse, test_r2, errors_test_standard,y_pred_test  = evaluate_model(X_train_processed,
+                                                                                         y_train,
+                                                                                         X_test_processed,
+                                                                                         y_test, model=rf_model)
 
         with col1:
             col1.subheader("Model")
@@ -372,7 +413,7 @@ if df_training is not None:
             st.pyplot(fig_hist)
 
         with col2:
-            col2.subheader("Observed vs Predicted")
+            col2.subheader("Test Obs vs Pred")
             fig_scatter, ax_scatter2 = plt.subplots()
             plt.scatter(y_test, y_pred_test)
             plt.xlabel("y_observed")
@@ -387,12 +428,32 @@ if df_training is not None:
             plt.ylabel ("Frequency")
             st.pyplot(fig_hist2)
         
+
+        try:
+            # Get feature importances, sort them, and create a DataFrame
+            sorted_indices = np.argsort(model.feature_importances_)[::-1]
+            sorted_features = X_test_processed.columns.values[sorted_indices]
+            sorted_importances = model.feature_importances_[sorted_indices]
+            sorted_importances_df = pd.DataFrame(sorted_importances, index=sorted_features, columns=['Importance'])
+
+            # Display the title of the plot
+            st.title("Feature Importances")
+            # Use Streamlit to create a bar chart
+            st.bar_chart(sorted_importances_df)
+
+            # Add a caption
+            st.caption("Bar chart of feature importances from the Random Forest Model")
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            st.stop()
+                
     except KeyError as e:
         st.error(f"KeyError: {e}.  Ensure the 'Age' and 'Spending' columns exist in the customer data, and that you have a target variable.  Adjust the column names as needed.")
     except Exception as e:
         st.error(f"An error occurred during model training/evaluation: {e}")
 else:
-    st.write("No customer data uploaded.")
+    st.write("No training data uploaded.")
 
 # --- Header 2: Model Results with Selected Features ---
 st.header("Model Results with Selected Features")
